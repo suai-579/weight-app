@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>体重BMI记录</title>
+<!-- PWA 核心配置 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#3b82f6">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="体重BMI记录">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+*{box-sizing:border-box;font-family:"Microsoft Yahei",sans-serif;margin:0;padding:0;}
+body{background:#f7f9fc;padding:12px;}
+.card{background:#fff;padding:16px;border-radius:12px;margin-bottom:16px;box-shadow:0 1px 6px #00000014;}
+h1{text-align:center;font-size:20px;color:#222;margin-bottom:14px;}
+h3{font-size:17px;margin-bottom:10px;}
+.form-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;}
+.form-height{
+    background:#eef6ff;padding:12px;border-radius:8px;margin-bottom:14px;
+    display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+}
+.form-height label{white-space:nowrap;font-size:14px;}
+.form-height input,.form-height select{
+    padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px;flex:1;min-width:75px;
+}
+input{padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px;flex:1;min-width:70px;}
+button{padding:8px 12px;border:none;border-radius:6px;background:#3b82f6;color:white;font-size:14px;cursor:pointer;white-space:nowrap;}
+button.del{background:#ef4444;}
+button.analysis-btn{background:#10b981;width:100%;padding:10px;font-size:15px;}
+table{width:100%;border-collapse:collapse;margin-top:10px;}
+th,td{border:1px solid #ddd;padding:8px 4px;text-align:center;vertical-align:middle;font-size:13px;}
+.chart-row{display:grid;grid-template-columns:1fr;gap:14px;}
+canvas{width:100%!important;height:280px!important;}
+.bmi-tag{display:inline-block;padding:3px 8px;border-radius:20px;color:#fff;font-size:13px;}
+.bmi-thin{background:#007bff;}
+.bmi-normal{background:#28a745;}
+.bmi-over{background:#ffc107;color:#222;}
+.bmi-fat{background:#dc3545;}
+.bmi-null{background:#868e96;}
+.bmi-note{margin-top:10px;font-size:14px;line-height:1.8;color:#444;}
+.bmi-note .bmi-tag{margin-right:6px;}
+.analysis-block{background:#f0fdf4;padding:14px;border-radius:10px;margin-top:16px;}
+.analysis-block h3{margin-top:0;color:#065f46;}
+.analysis-block p{margin:8px 0;font-size:14px;}
+#copyTip{color:#10b981;display:none;font-weight:bold;}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>📉体重 & BMI记录工具</h1>
+<div class="form-height">
+    <label>性别：</label>
+    <select id="inpGender">
+        <option value="">请选择</option>
+        <option value="male">男</option>
+        <option value="female">女</option>
+    </select>
+    <label>年龄：</label>
+    <input id="inpAge" type="number" min="10" max="120" placeholder="年龄">
+    <label>身高(m)：</label>
+    <input id="inpHeight" type="number" step="0.01" placeholder="身高(m)">
+    <button onclick="saveUserInfo()">保存个人信息</button>
+</div>
+<div class="form-row">
+    <label>日期:</label>
+    <input id="inpDate" type="date">
+    <label>体重(kg):</label>
+    <input id="inpWeight" type="number" step="0.1" placeholder="体重">
+    <button onclick="saveRecord()">保存记录</button>
+</div>
+<h3>📝录入数据</h3>
+<table>
+<thead>
+<tr><th>日期</th><th>体重</th><th>BMI</th><th>状态</th><th>操作</th></tr>
+</thead>
+<tbody id="inputTableBody"></tbody>
+</table>
+<div class="bmi-note">
+<b>中国成人BMI标准：</b><br>
+<span class="bmi-tag bmi-thin">偏瘦</span>＜18.5<br>
+<span class="bmi-tag bmi-normal">正常</span>18.5～23.9<br>
+<span class="bmi-tag bmi-over">超重</span>24.0～27.9<br>
+<span class="bmi-tag bmi-fat">肥胖</span>≥28.0
+</div>
+<div class="form-row" style="margin-top:14px;">
+    <button onclick="drawChart()">📈绘制曲线</button>
+    <button onclick="clearAllData()">⚠️清空全部数据</button>
+</div>
+<div class="analysis-block">
+    <h3>📊数据分析与减重建议</h3>
+    <p>点击按钮自动打包数据，复制文本粘贴到豆包获取减重分析</p>
+    <button class="analysis-btn" onclick="copyAnalysisText()">📋复制数据给豆包分析</button>
+    <p id="copyTip">✅已复制，直接粘贴到豆包对话框！</p>
+</div>
+</div>
+
+<div class="chart-row">
+    <div class="card"><canvas id="weightChart"></canvas></div>
+    <div class="card"><canvas id="bmiChart"></canvas></div>
+</div>
+
+<script>
+let weightChart=null,bmiChart=null;
+const heightKey="userHeight",ageKey="userAge",genderKey="userGender";
+
+function getSavedUserInfo(){
+    return {
+        gender:localStorage.getItem(genderKey)||null,
+        age:parseFloat(localStorage.getItem(ageKey))||null,
+        height:parseFloat(localStorage.getItem(heightKey))||null
+    }
+}
+function saveUserInfo(){
+    const gender=document.getElementById("inpGender").value;
+    const age=parseFloat(document.getElementById("inpAge").value);
+    const h=parseFloat(document.getElementById("inpHeight").value);
+    if(!gender||isNaN(age)||age<=0||isNaN(h)||h<=0){alert("请完整填写性别、年龄、身高！");return;}
+    localStorage.setItem(genderKey,gender);
+    localStorage.setItem(ageKey,age);
+    localStorage.setItem(heightKey,h);
+    alert("个人信息已保存，后续无需重复填写！");
+}
+function getData(){let raw=localStorage.getItem("weightData");if(!raw)return[];return JSON.parse(raw);}
+function saveData(arr){localStorage.setItem("weightData",JSON.stringify(arr));}
+function calcBMI(weight){const info=getSavedUserInfo();if(!info.height)return"-";return(weight/(info.height*info.height)).toFixed(2);}
+function getBmiInfo(bmiStr){
+    const bmi=parseFloat(bmiStr);
+    if(isNaN(bmi))return{text:"无数据",cls:"bmi-null"};
+    if(bmi<18.5)return{text:"偏瘦",cls:"bmi-thin"};
+    else if(bmi<=23.9)return{text:"正常",cls:"bmi-normal"};
+    else if(bmi<=27.9)return{text:"超重",cls:"bmi-over"};
+    else return{text:"肥胖",cls:"bmi-fat"};
+}
+function saveRecord(){
+    const info=getSavedUserInfo();
+    if(!info.height){alert("请先设置并保存你的个人信息！");return;}
+    const date=document.getElementById("inpDate").value;
+    const w=parseFloat(document.getElementById("inpWeight").value);
+    if(!date||isNaN(w)){alert("请填写完整日期和体重！");return;}
+    let arr=getData();
+    let idx=arr.findIndex(x=>x.date===date);
+    const bmiVal=calcBMI(w);
+    if(idx>=0){arr[idx].weight=w;arr[idx].bmi=bmiVal;}
+    else{arr.push({date,weight:w,bmi:bmiVal});}
+    arr.sort((a,b)=>new Date(a.date)-new Date(b.date));
+    saveData(arr);renderInputTable();alert("保存成功");
+}
+function renderInputTable(){
+    const arr=getData();const tb=document.getElementById("inputTableBody");tb.innerHTML="";
+    arr.forEach((item,index)=>{
+        const bmiInfo=getBmiInfo(item.bmi);
+        let tr=document.createElement("tr");
+        tr.innerHTML=`
+            <td>${item.date}</td><td>${item.weight}</td><td>${item.bmi}</td>
+            <td><span class="bmi-tag ${bmiInfo.cls}">${bmiInfo.text}</span></td>
+            <td><button onclick="editItem(${index})">编辑</button><button class="del" onclick="deleteItem(${index})">删除</button></td>`;
+        tb.appendChild(tr);
+    })
+}
+function editItem(idx){const arr=getData();const rec=arr[idx];document.getElementById("inpDate").value=rec.date;document.getElementById("inpWeight").value=rec.weight;}
+function deleteItem(idx){if(!confirm("确定删除这条记录？"))return;let arr=getData();arr.splice(idx,1);saveData(arr);renderInputTable();}
+function drawChart(){
+    const arr=getData();
+    if(arr.length<2){alert("至少录入2条以上数据才可以绘图！");return;}
+    const labels=arr.map(x=>x.date),weightData=arr.map(x=>x.weight),bmiData=arr.map(x=>x.bmi);
+    if(weightChart)weightChart.destroy();if(bmiChart)bmiChart.destroy();
+    const ctx1=document.getElementById('weightChart').getContext('2d');
+    weightChart=new Chart(ctx1,{type:'line',data:{labels,datasets:[{label:'体重(kg)',data:weightData,borderColor:"#3b82f6",backgroundColor:"rgba(59,130,246,0.12)",fill:true,tension:0.2,pointRadius:4}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{title:{display:true,text:"体重 kg"}},x:{title:{display:true,text:"日期"}}}}});
+    const ctx2=document.getElementById('bmiChart').getContext('2d');
+    bmiChart=new Chart(ctx2,{type:'line',data:{labels,datasets:[{label:'BMI',data:bmiData,borderColor:"#ef4444",backgroundColor:"rgba(239,68,68,0.12)",fill:true,tension:0.2,pointRadius:4}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{title:{display:true,text:"BMI指数"}},x:{title:{display:true,text:"日期"}}}}});
+}
+function clearAllData(){if(!confirm("确认清空全部记录？删除后无法恢复！"))return;localStorage.removeItem("weightData");renderInputTable();if(weightChart)weightChart.destroy();if(bmiChart)bmiChart.destroy();}
+function copyAnalysisText(){
+    const info=getSavedUserInfo();const records=getData();
+    if(!info.gender||!info.age||!info.height){alert("请先保存个人信息！");return;}
+    if(records.length===0){alert("请录入至少一条体重记录！");return;}
+    let text=`帮我分析减重数据，给出饮食运动建议：\n个人信息：\n性别：${info.gender==="male"?"男":"女"}，年龄：${info.age}岁，身高：${info.height}m\n体重记录列表：\n`;
+    records.forEach(r=>{text+=`${r.date}，体重${r.weight}kg，BMI:${r.bmi}\n`;});
+    text+=`\n请分析我的体重变化趋势、BMI情况，估算基础代谢，给出合理的热量缺口、饮食方案和运动建议。`;
+    navigator.clipboard.writeText(text).then(()=>{
+        document.getElementById("copyTip").style.display="block";
+        setTimeout(()=>document.getElementById("copyTip").style.display="none",3000);
+    }).catch(err=>{alert("复制失败，请手动复制文本：\n"+text);});
+}
+window.onload=()=>{
+    const today=new Date().toISOString().split('T')[0];
+    document.getElementById("inpDate").value=today;
+    const info=getSavedUserInfo();
+    if(info.gender)document.getElementById("inpGender").value=info.gender;
+    if(info.age)document.getElementById("inpAge").value=info.age;
+    if(info.height)document.getElementById("inpHeight").value=info.height;
+    renderInputTable();
+}
+// 注册 Service Worker（PWA 离线支持）
+if('serviceWorker' in navigator){
+    window.addEventListener('load',()=>{
+        navigator.serviceWorker.register('sw.js').catch(err=>console.log('SW注册失败:',err));
+    });
+}
+</script>
+</body>
+</html>
+<!-- （注：内容由AI生成） -->
